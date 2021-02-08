@@ -16,19 +16,12 @@ torch.manual_seed(0)
 
 
 class MeanAggregator(nn.Module):
-    def __init__(self, concat=False):
+    def __init__(self):
         super().__init__()
-        self.concat = concat
 
     def forward(self, x_self, x_neigh):
-        x_neigh = x_neigh.mean(-2)
-
-        if not self.concat:
-            output = x_self + x_neigh
-        else:
-            output = torch.cat([x_self, x_neigh], axis=1)
-
-        return output
+        x_self = x_self.view(x_self.shape[0], 1, x_self.shape[1])
+        return torch.cat([x_self, x_neigh], axis=1).mean(-2)
 
 
 class GraphLoader(Dataset):
@@ -74,9 +67,10 @@ class GraphLoader(Dataset):
             node_id, is_test = str(values['id']), values['test']
             self._types[id_map[node_id]] = is_test
         del types
-        self._connections = torch.zeros((self.n_nodes, self.n_nodes), dtype=torch.bool)
+        self._connections = [[i] for i in range(self.n_nodes)]
         for edge in edges:
-            self._connections[edge['source'], edge['target']] = 1
+            self._connections[edge['source']].append(edge['target'])
+        self._connections = [torch.Tensor(row) for row in self._connections]
         del edges
         self._classes = torch.empty((self.n_nodes, len(classes[node_id])), dtype=torch.float)
         for node_id, idx in id_map.items():
@@ -116,15 +110,14 @@ class GraphLoader(Dataset):
         Sample nodes names from graph.
         """
         return self._selected_ids[torch.randint(self._selected_ids.shape[0], (self.batch_size,))]
-    
+
     def neighbors(self, nodes, n_neighbors):
         """
         Sample n_neighbors neighbor names of nodes given.
         """
-        neighs = torch.empty((nodes.shape[0], n_neighbors), dtype=torch.int)
+        neighs = torch.empty((nodes.shape[0], n_neighbors), dtype=torch.long)
         for i, node in enumerate(nodes):
-            neigh_mask = self._connections[node][self.test == self._types]
-            neigh = torch.cat([torch.Tensor([node]), self._selected_ids[neigh_mask]], axis=-1)
+            neigh = self._connections[node]
             neighs[i] = neigh[torch.randint(neigh.shape[-1], (n_neighbors,))]
         return neighs
 
@@ -141,9 +134,9 @@ class GraphSAGE(nn.Module):
         self.dataloader = dataloader
         self.concat = concat
         if self.concat:
-            layer_sizes = [layer_sizes[0]] + [s * 2 for s in layer_sizes[1:]]
+            layer_sizes = [s * 2 for s in layer_sizes]#[layer_sizes[0]] + [s * 2 for s in layer_sizes[1:]]
         self.layers = nn.ModuleList([nn.Linear(size, layer_sizes[i+1]) for i, size in enumerate(layer_sizes[:-1])])
-        self.aggregators = nn.ModuleList([MeanAggregator(self.concat) for _ in range(len(layer_sizes)-1)])
+        self.aggregators = nn.ModuleList([MeanAggregator() for _ in range(len(layer_sizes)-1)])
 
     def forward(self, x, nodes):
         """
@@ -159,7 +152,7 @@ class GraphSAGE(nn.Module):
             neighs = self.dataloader.neighbors(nodes, self.n_neighbors[i])
             neigh_feats = self.dataloader.get_feats(neighs)
             h = self.aggregators[i](h_prev, neigh_feats)
-            h = layer(torch.cat(h_prev, h))
+            h = layer(torch.cat([h_prev, h], -1))
             h = torch.max(h, 0)
         return h
 
@@ -195,7 +188,7 @@ if __name__ == '__main__':
 
     dataloader = GraphLoader('ppi', BATCH_SIZE, max_degree=MAX_DEGREE)
 
-    model = GraphSAGE([dataloader.n_feats, HIDDEN_SIZE, EMBED_DIM], [25, 10], dataloader)
+    model = GraphSAGE([dataloader.n_feats, EMBED_DIM], [25, 10], dataloader)
     opt = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
     n_steps = 0
