@@ -5,6 +5,7 @@ http://snap.stanford.edu/graphsage/
 """
 import os
 import json
+from time import time
 import numpy as np
 import torch
 import torch.nn as nn
@@ -20,8 +21,10 @@ class MeanAggregator(nn.Module):
         super().__init__()
 
     def forward(self, x_self, x_neigh):
-        x_self = x_self.view(x_self.shape[0], 1, x_self.shape[1])
-        return torch.cat([x_self, x_neigh], axis=1).mean(-2)
+        if len(x_self.shape) == 2:
+            x_self = x_self.view(x_self.shape[0], -1, x_self.shape[1])
+
+        return torch.cat([x_self, x_neigh], axis=1).mean(1).view(x_self.shape[0], 1, x_self.shape[2])
 
 
 class GraphLoader(Dataset):
@@ -105,11 +108,12 @@ class GraphLoader(Dataset):
         Shuffle dataset, also serves as a reset function.
         """
 
-    def sample(self):
+    def sample(self, n_samples=None):
         """
         Sample nodes names from graph.
         """
-        return self._selected_ids[torch.randint(self._selected_ids.shape[0], (self.batch_size,))]
+        n_samples = n_samples or self.batch_size
+        return self._selected_ids[torch.randint(self._selected_ids.shape[0], (n_samples,))]
 
     def neighbors(self, nodes, n_neighbors):
         """
@@ -119,6 +123,16 @@ class GraphLoader(Dataset):
         for i, node in enumerate(nodes):
             neigh = self._connections[node]
             neighs[i] = neigh[torch.randint(neigh.shape[-1], (n_neighbors,))]
+        return neighs
+
+    def random_walk(self, nodes, n_samples, walk_len):
+        """
+        Fixed length random walk starting at given nodes.
+        """
+        assert n_samples == 1, "Random walk not implemented for n_samples>1!"
+        neighs = nodes
+        for _ in range(walk_len):
+            neighs = self.neighbors(neighs, 1)
         return neighs
 
 
@@ -137,6 +151,7 @@ class GraphSAGE(nn.Module):
             layer_sizes = [s * 2 for s in layer_sizes]#[layer_sizes[0]] + [s * 2 for s in layer_sizes[1:]]
         self.layers = nn.ModuleList([nn.Linear(size, layer_sizes[i+1]) for i, size in enumerate(layer_sizes[:-1])])
         self.aggregators = nn.ModuleList([MeanAggregator() for _ in range(len(layer_sizes)-1)])
+        self.activations = [nn.ReLU(), nn.ReLU()]
 
     def forward(self, x, nodes):
         """
@@ -148,12 +163,15 @@ class GraphSAGE(nn.Module):
             IDs of nodes.
         """
         h_prev = x.detach().clone()
+        if len(h_prev.shape) == 2:
+            h_prev = h_prev.view(h_prev.shape[0], -1, h_prev.shape[1])
+
         for i, layer in enumerate(self.layers):
             neighs = self.dataloader.neighbors(nodes, self.n_neighbors[i])
             neigh_feats = self.dataloader.get_feats(neighs)
             h = self.aggregators[i](h_prev, neigh_feats)
             h = layer(torch.cat([h_prev, h], -1))
-            h = torch.max(h, 0)
+            h = self.activations[i](h)
         return h
 
     def loss(self, z, nodes):
@@ -173,7 +191,21 @@ class GraphSAGE(nn.Module):
         nodes: tensor[batch_size]
             IDs of nodes.
         """
-        return
+        walk_len = 3  # TODO
+        num_pos = 1  # TODO - Assumed since no mult on pos_score
+        num_negs = 20
+
+        pos_nodes = self.dataloader.random_walk(nodes, num_pos, walk_len)
+        pos_feats = self.dataloader.get_feats(pos_nodes)
+        pos_embeds = self.forward(pos_feats, pos_nodes)
+        neg_nodes = self.dataloader.sample(num_negs * len(nodes))
+        neg_feats = self.dataloader.get_feats(neg_nodes)
+        neg_embeds = self.forward(neg_feats, neg_nodes).view(len(nodes), num_negs, -1)
+
+        pos_score = -torch.log(torch.sigmoid(torch.sum(z * pos_embeds, dim=-1))).squeeze()
+        neg_score = -torch.log(torch.sigmoid(torch.sum(z * neg_embeds, dim=-1))).sum(-1)
+
+        return (pos_score + num_negs * neg_score).mean()
 
 
 if __name__ == '__main__':
@@ -193,6 +225,8 @@ if __name__ == '__main__':
 
     n_steps = 0
     for epoch in range(N_EPOCH): 
+        time_start = time()
+
         dataloader.shuffle()
         loss_total = 0
         for ids in dataloader:
@@ -207,8 +241,8 @@ if __name__ == '__main__':
             loss_total += loss.item()
             n_steps += 1
 
-        print(epoch, loss_total)
-        if n_steps > MAx_STEPS:
+        print(f"{epoch}: {time() - time_start:.1f}s | {loss_total:.2f}")
+        if n_steps > MAX_STEPS:
             break
 
     # TODO validate
