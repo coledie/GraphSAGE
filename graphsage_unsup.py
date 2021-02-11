@@ -68,7 +68,7 @@ if __name__ == '__main__':
 
     dataloader = GraphLoader('ppi', BATCH_SIZE, max_degree=MAX_DEGREE)
 
-    model = GraphSAGE([dataloader.n_feats, HIDDEN_SIZE, EMBED_DIM], [25, 10], dataloader)
+    model = UnsupGraphSAGE([dataloader.n_feats, HIDDEN_SIZE, EMBED_DIM], [25, 10], dataloader)
     opt = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
     n_steps = 0
