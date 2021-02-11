@@ -53,7 +53,7 @@ class GraphLoader(Dataset):
             self._connections[edge['source']].append(edge['target'])
         self._connections = [torch.Tensor(row).to(torch.long) for row in self._connections]
         del edges
-        self._classes = torch.empty((self.n_nodes, len(classes[node_id])), dtype=torch.float)
+        self._classes = torch.empty((self.n_nodes, len(classes[node_id])), dtype=torch.long)
         for node_id, idx in id_map.items():
             self._classes[idx] = torch.Tensor(classes[node_id])
         del classes, id_map
