@@ -73,7 +73,7 @@ class GraphLoader(Dataset):
         self._connections = [[i] for i in range(self.n_nodes)]
         for edge in edges:
             self._connections[edge['source']].append(edge['target'])
-        self._connections = [torch.Tensor(row) for row in self._connections]
+        self._connections = [torch.Tensor(row).to(torch.long) for row in self._connections]
         del edges
         self._classes = torch.empty((self.n_nodes, len(classes[node_id])), dtype=torch.float)
         for node_id, idx in id_map.items():
@@ -147,13 +147,11 @@ class GraphSAGE(nn.Module):
         self.n_neighbors = n_neighbors
         self.dataloader = dataloader
         self.concat = concat
-        if self.concat:
-            layer_sizes = [s * 2 for s in layer_sizes]#[layer_sizes[0]] + [s * 2 for s in layer_sizes[1:]]
-        self.layers = nn.ModuleList([nn.Linear(size, layer_sizes[i+1]) for i, size in enumerate(layer_sizes[:-1])])
+        self.layers = nn.ModuleList([nn.Linear(size * ([1, 2][self.concat]), layer_sizes[i+1]) for i, size in enumerate(layer_sizes[:-1])])
         self.aggregators = nn.ModuleList([MeanAggregator() for _ in range(len(layer_sizes)-1)])
-        self.activations = [nn.ReLU(), nn.ReLU()]
+        self.activations = nn.ModuleList([nn.ReLU() for _ in range(len(self.layers))])
 
-    def forward(self, x, nodes):
+    def forward(self, x, nodes, limit=9999):
         """
         Parameters
         ----------
@@ -166,12 +164,18 @@ class GraphSAGE(nn.Module):
         if len(h_prev.shape) == 2:
             h_prev = h_prev.view(h_prev.shape[0], -1, h_prev.shape[1])
 
-        for i, layer in enumerate(self.layers):
+        # TODO only need to remove uniques here!
+
+        for i, layer in enumerate(self.layers[:limit]):
             neighs = self.dataloader.neighbors(nodes, self.n_neighbors[i])
             neigh_feats = self.dataloader.get_feats(neighs)
+            if i == 1:
+                neigh_feats = self.forward(neigh_feats.reshape(-1, self.dataloader.n_feats), neighs.flatten(), limit=1).reshape(len(nodes), -1, h_prev.shape[-1])
             h = self.aggregators[i](h_prev, neigh_feats)
             h = layer(torch.cat([h_prev, h], -1))
             h = self.activations[i](h)
+            h_prev = h
+
         return h
 
     def loss(self, z, nodes):
@@ -191,8 +195,8 @@ class GraphSAGE(nn.Module):
         nodes: tensor[batch_size]
             IDs of nodes.
         """
-        walk_len = 3  # TODO
-        num_pos = 1  # TODO - Assumed since no mult on pos_score
+        walk_len = 3
+        num_pos = 1
         num_negs = 20
 
         pos_nodes = self.dataloader.random_walk(nodes, num_pos, walk_len)
@@ -220,7 +224,7 @@ if __name__ == '__main__':
 
     dataloader = GraphLoader('ppi', BATCH_SIZE, max_degree=MAX_DEGREE)
 
-    model = GraphSAGE([dataloader.n_feats, EMBED_DIM], [25, 10], dataloader)
+    model = GraphSAGE([dataloader.n_feats, HIDDEN_SIZE, EMBED_DIM], [25, 10], dataloader)
     opt = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
     n_steps = 0
@@ -241,7 +245,7 @@ if __name__ == '__main__':
             loss_total += loss.item()
             n_steps += 1
 
-        print(f"{epoch}: {time() - time_start:.1f}s | {loss_total:.2f}")
+        print(f"{epoch}: {time() - time_start:.1f}s | {loss_total:.8f}")
         if n_steps > MAX_STEPS:
             break
 
