@@ -3,14 +3,12 @@ PyTorch recreation of the GraphSAGE model.
 
 http://snap.stanford.edu/graphsage/
 """
-from time import time
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.functional as F
-import torch.optim as optim
 from util.aggregator import MeanAggregator
 from util.graph_loader import GraphLoader
+from util.loop import train
 from graphsage import GraphSAGE
 
 torch.manual_seed(0)
@@ -39,6 +37,8 @@ class UnsupGraphSAGE(GraphSAGE):
         nodes: tensor[batch_size]
             IDs of nodes.
         """
+        z = z.view(-1, 1, z.shape[-1])
+
         walk_len = 3
         num_pos = 1
         num_negs = 20
@@ -59,36 +59,12 @@ class UnsupGraphSAGE(GraphSAGE):
 if __name__ == '__main__':
     N_EPOCH = 5
     BATCH_SIZE = 512
-    MAX_STEPS = 1e10
 
-    LEARNING_RATE = .01
+    LEARNING_RATE = 2 * 10**-6
+    HIDDEN_SIZE = 256
     EMBED_DIM = 128
-    HIDDEN_SIZE = 128
-    MAX_DEGREE = 128
 
-    dataloader = GraphLoader('ppi', BATCH_SIZE, max_degree=MAX_DEGREE)
-
+    dataloader = GraphLoader('ppi', BATCH_SIZE)
     model = UnsupGraphSAGE([dataloader.n_feats, HIDDEN_SIZE, EMBED_DIM], [25, 10], dataloader)
-    opt = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-    n_steps = 0
-    for epoch in range(N_EPOCH): 
-        time_start = time()
-
-        dataloader.shuffle()
-        loss_total = 0
-        for ids in dataloader:
-            opt.zero_grad()
-            feats = dataloader.get_feats(ids)
-            embeds = model(feats, ids)
-
-            loss = model.loss(embeds, ids)
-            loss.backward()
-            opt.step()
-
-            loss_total += loss.item()
-            n_steps += 1
-
-        print(f"{epoch}: {time() - time_start:.1f}s | {loss_total:.8f}")
-        if n_steps > MAX_STEPS:
-            break
+    model = train(model, dataloader, N_EPOCH, LEARNING_RATE)

@@ -3,15 +3,12 @@ PyTorch recreation of the GraphSAGE model.
 
 http://snap.stanford.edu/graphsage/
 """
-from time import time
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.optim as optim
 from util.aggregator import MeanAggregator
 from util.graph_loader import GraphLoader
-from sklearn.metrics import f1_score
+from util.loop import train, validate
 
 torch.manual_seed(0)
 
@@ -58,7 +55,7 @@ class GraphSAGE(nn.Module):
 
         return h.squeeze()
 
-    def loss(self, z, expected):
+    def loss(self, z, ids):
         """
         Simple supervised loss.
 
@@ -66,11 +63,12 @@ class GraphSAGE(nn.Module):
         ----------
         z: tensor[batch_size, n_class]
             Embeddings for nodes given.
-        expected: tensor[batch_size, n_class]
-            Class vector for same nodes as z.
+        ids: tensor[batch_size]
+            Node ids.
         """
+        expected = self.dataloader.get_classes(ids).to(torch.float)
         criterion = nn.BCEWithLogitsLoss()
-        return criterion(z, expected.to(torch.float)).mean()
+        return criterion(z, expected).mean()
 
 
 if __name__ == '__main__':
@@ -81,50 +79,14 @@ if __name__ == '__main__':
     HIDDEN_SIZE = 256
 
     dataloader = GraphLoader('ppi', BATCH_SIZE)
-
     model = GraphSAGE([dataloader.n_feats, HIDDEN_SIZE, dataloader.n_classes], [25, 10], dataloader)
-    opt = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-    n_steps = 0
-    for epoch in range(N_EPOCH): 
-        time_start = time()
+    model = train(model, dataloader, N_EPOCH, LEARNING_RATE)
 
-        dataloader.shuffle()
-        loss_total = 0
-        for ids in dataloader:
-            opt.zero_grad()
-            feats = dataloader.get_feats(ids)
-            embeds = model(feats, ids)
-
-            loss = model.loss(embeds, dataloader.get_classes(ids))
-            loss.backward()
-            opt.step()
-
-            loss_total += loss.item()
-            n_steps += 1
-
-        print(f"{epoch}: {time() - time_start:.1f}s | {loss_total:.8f}")
-
-    dataloader = GraphLoader('ppi', BATCH_SIZE, max_degree=MAX_DEGREE, test=True)
-    dataloader.shuffle()
-    model.eval()
+    dataloader = GraphLoader('ppi', BATCH_SIZE, test=True)
     model.dataloader = dataloader
-
     MAX_STEPS = 5000
-    n_steps = 0
-    scores = []
-    for ids in dataloader:
-        feats = dataloader.get_feats(ids)
-        embeds = model(feats, ids)
 
-        preds = (embeds.detach().numpy() >= .5)
-        real = dataloader.get_classes(ids).detach().numpy()
+    f1 = validate(model, dataloader, MAX_STEPS)
 
-        score = f1_score(preds, real, average="samples", zero_division=0)
-        scores.append(score)
-
-        n_steps += 1
-        if n_steps > MAX_STEPS:
-            break
-
-    print(f"F1: {np.mean(scores) * 100:.1f}")
+    print(f"F1: {f1 * 100:.1f}")
