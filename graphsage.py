@@ -11,6 +11,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from util.aggregator import MeanAggregator
 from util.graph_loader import GraphLoader
+from sklearn.metrics import f1_score
 
 torch.manual_seed(0)
 
@@ -75,9 +76,8 @@ class GraphSAGE(nn.Module):
 if __name__ == '__main__':
     N_EPOCH = 5
     BATCH_SIZE = 512
-    MAX_STEPS = 1e10
 
-    LEARNING_RATE = .01
+    LEARNING_RATE = .1
     HIDDEN_SIZE = 128
     MAX_DEGREE = 128
 
@@ -105,10 +105,27 @@ if __name__ == '__main__':
             n_steps += 1
 
         print(f"{epoch}: {time() - time_start:.1f}s | {loss_total:.8f}")
+
+    dataloader = GraphLoader('ppi', BATCH_SIZE, max_degree=MAX_DEGREE, test=True)
+    dataloader.shuffle()
+    model.eval()
+    model.dataloader = dataloader
+
+    MAX_STEPS = 5000
+    n_steps = 0
+    scores = []
+    for ids in dataloader:
+        feats = dataloader.get_feats(ids)
+        embeds = model(feats, ids)
+
+        preds = (embeds.detach().numpy() >= .5)
+        real = dataloader.get_classes(ids).detach().numpy()
+
+        score = f1_score(preds, real, average="samples", zero_division=0)
+        scores.append(score)
+
+        n_steps += 1
         if n_steps > MAX_STEPS:
             break
 
-    # TODO validate
-    model.eval()
-    N_STEP = 5000
-    BATCH_SIZE = 256
+    print(f"F1: {np.mean(scores) * 100:.1f}")
