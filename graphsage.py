@@ -74,14 +74,13 @@ class GraphSAGE(nn.Module):
 
 
 if __name__ == '__main__':
-    N_EPOCH = 5
+    N_EPOCH = 10
     BATCH_SIZE = 512
 
-    LEARNING_RATE = .1
-    HIDDEN_SIZE = 128
-    MAX_DEGREE = 128
+    LEARNING_RATE = .01
+    HIDDEN_SIZE = 256
 
-    dataloader = GraphLoader('ppi', BATCH_SIZE, max_degree=MAX_DEGREE)
+    dataloader = GraphLoader('ppi', BATCH_SIZE)
 
     model = GraphSAGE([dataloader.n_feats, HIDDEN_SIZE, dataloader.n_classes], [25, 10], dataloader)
     opt = optim.Adam(model.parameters(), lr=LEARNING_RATE)
