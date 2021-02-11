@@ -7,7 +7,7 @@ from time import time
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.functional as F
+import torch.nn.functional as F
 import torch.optim as optim
 from util.aggregator import MeanAggregator
 from util.graph_loader import GraphLoader
@@ -55,40 +55,21 @@ class GraphSAGE(nn.Module):
             h = self.activations[i](h)
             h_prev = h
 
-        return h
+        return h.squeeze()
 
-    def loss(self, z, nodes):
+    def loss(self, z, expected):
         """
-        Encourage nearby nodes to have similar representations while
-        enforcing that disparate nodes are highly distinct.
-
-        loss = -log(sigma(z_u.T *z_v))-Q E_vn~P_n(v)(log(sigma(-z_u.T*z_vn)))
-        z = embedding of node
-        v = node that coocurs near u on fixed length randon walk.
-        P_n is negative sampling dist, Q = num negative sampels.
+        Simple supervised loss.
 
         Parameters
         ----------
-        z: tensor[batch_size, embed_dim]
+        z: tensor[batch_size, n_class]
             Embeddings for nodes given.
-        nodes: tensor[batch_size]
-            IDs of nodes.
+        expected: tensor[batch_size, n_class]
+            Class vector for same nodes as z.
         """
-        walk_len = 3
-        num_pos = 1
-        num_negs = 20
-
-        pos_nodes = self.dataloader.random_walk(nodes, num_pos, walk_len)
-        pos_feats = self.dataloader.get_feats(pos_nodes)
-        pos_embeds = self.forward(pos_feats, pos_nodes)
-        neg_nodes = self.dataloader.sample(num_negs * len(nodes))
-        neg_feats = self.dataloader.get_feats(neg_nodes)
-        neg_embeds = self.forward(neg_feats, neg_nodes).view(len(nodes), num_negs, -1)
-
-        pos_score = -torch.log(torch.sigmoid(torch.sum(z * pos_embeds, dim=-1))).squeeze()
-        neg_score = -torch.log(torch.sigmoid(torch.sum(z * neg_embeds, dim=-1))).sum(-1)
-
-        return (pos_score + num_negs * neg_score).mean()
+        criterion = nn.BCEWithLogitsLoss()
+        return criterion(z, expected.to(torch.float)).mean()
 
 
 if __name__ == '__main__':
@@ -97,13 +78,12 @@ if __name__ == '__main__':
     MAX_STEPS = 1e10
 
     LEARNING_RATE = .01
-    EMBED_DIM = 128
     HIDDEN_SIZE = 128
     MAX_DEGREE = 128
 
     dataloader = GraphLoader('ppi', BATCH_SIZE, max_degree=MAX_DEGREE)
 
-    model = GraphSAGE([dataloader.n_feats, HIDDEN_SIZE, EMBED_DIM], [25, 10], dataloader)
+    model = GraphSAGE([dataloader.n_feats, HIDDEN_SIZE, dataloader.n_classes], [25, 10], dataloader)
     opt = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
     n_steps = 0
@@ -117,7 +97,7 @@ if __name__ == '__main__':
             feats = dataloader.get_feats(ids)
             embeds = model(feats, ids)
 
-            loss = model.loss(embeds, ids)
+            loss = model.loss(embeds, dataloader.get_classes(ids))
             loss.backward()
             opt.step()
 
