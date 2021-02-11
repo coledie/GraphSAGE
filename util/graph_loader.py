@@ -21,9 +21,8 @@ class GraphLoader(Dataset):
     eg PPO or reddit preprocessed dataset from,
     http://snap.stanford.edu/graphsage/
     """
-    def __init__(self, folder, batch_size, max_degree=9999, test=False):
+    def __init__(self, folder, batch_size, test=False):
         self.batch_size = batch_size
-        self.max_degree = max_degree
         self.test = test
 
         for filename in os.listdir(folder):
