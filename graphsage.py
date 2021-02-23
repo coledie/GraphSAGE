@@ -3,6 +3,7 @@ PyTorch recreation of the GraphSAGE model.
 
 http://snap.stanford.edu/graphsage/
 """
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -41,7 +42,8 @@ class GraphSAGE(nn.Module):
         if len(h_prev.shape) == 2:
             h_prev = h_prev.view(h_prev.shape[0], -1, h_prev.shape[1])
 
-        # TODO only need to remove uniques here!
+        nodes, unique_idx, unique_reverse = np.unique(nodes, return_index=True, return_inverse=True)
+        h_prev = h_prev[unique_idx]
 
         for i, layer in enumerate(self.layers[:limit]):
             neighs = self.dataloader.neighbors(nodes, self.n_neighbors[i])
@@ -53,7 +55,8 @@ class GraphSAGE(nn.Module):
             h = self.activations[i](h)
             h_prev = h
 
-        return h.squeeze()
+        h = h.squeeze()[unique_reverse]
+        return h
 
     def loss(self, z, ids):
         """
