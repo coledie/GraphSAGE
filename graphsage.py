@@ -78,7 +78,7 @@ if __name__ == '__main__':
     N_EPOCH = 10
     BATCH_SIZE = 512
 
-    LEARNING_RATE = .01
+    LEARNING_RATE = .001
     HIDDEN_SIZE = 256
 
     dataloader = GraphLoader('ppi', BATCH_SIZE)
