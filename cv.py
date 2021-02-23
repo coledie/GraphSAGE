@@ -14,6 +14,7 @@ python cv.py --unsup
 
 https://arxiv.org/abs/1710.10568
 """
+import inspect
 import numpy as np
 import torch
 from util.graph_loader import GraphLoader
@@ -23,7 +24,7 @@ np.random.seed(0)
 torch.manual_seed(0)
 
 
-def cv_forward_wrap(forward, n_historical, n_nodes, embed_dim):
+def cv_forward_wrap(forward, model, n_historical, n_nodes, embed_dim):
     historicals = torch.full((n_nodes, embed_dim), -1.)
 
     def cv_forward(x, nodes, limit=9999):
@@ -47,6 +48,8 @@ def cv_forward_wrap(forward, n_historical, n_nodes, embed_dim):
             h_normal = forward(x[~historical_mask], nodes[~historical_mask], limit)
             h_historical = historicals[nodes[historical_mask]].detach()
 
+            h_historical *= n_historical / model.n_neighbors[limit]
+
             h = torch.zeros((len(nodes), embed_dim), dtype=h_normal.dtype)
             h[~historical_mask] = h_normal
             h[historical_mask] = h_historical
@@ -60,9 +63,12 @@ def cv_forward_wrap(forward, n_historical, n_nodes, embed_dim):
     return cv_forward
 
 
-def cv_neighbors_wrap(neighbors, n_historical):
+def cv_neighbors_wrap(neighbors, model, n_historical):
     def cv_neighbors(nodes, n_neighbors):
-        neighs = neighbors(nodes, n_neighbors + n_historical)
+        parent_fn = inspect.getouterframes(inspect.currentframe())[1].function
+        if parent_fn == 'forward' and n_neighbors == model.n_neighbors[1]:
+            n_neighbors += n_historical
+        neighs = neighbors(nodes, n_neighbors)
         return neighs
 
     return cv_neighbors
@@ -75,8 +81,8 @@ def cv_wrapper(model, n_historical, embed_dim):
     """
     n_nodes = model.dataloader.n_nodes
 
-    model.forward = cv_forward_wrap(model.forward, n_historical, n_nodes, embed_dim)
-    model.dataloader.neighbors = cv_neighbors_wrap(model.dataloader.neighbors, n_historical)
+    model.forward = cv_forward_wrap(model.forward, model, n_historical, n_nodes, embed_dim)
+    model.dataloader.neighbors = cv_neighbors_wrap(model.dataloader.neighbors, model, n_historical)
     return model
 
 
@@ -85,13 +91,19 @@ if __name__ == '__main__':
 
     N_EPOCH = 10
     BATCH_SIZE = 512
-
-    LEARNING_RATE = .01
-    HIDDEN_SIZE = 256
-    N_HISTORICAL = 5
+    N_HISTORICAL = 10
 
     dataloader = GraphLoader('ppi', BATCH_SIZE)
-    model_args = [[dataloader.n_feats, HIDDEN_SIZE, dataloader.n_classes], [25, 5], dataloader]
+    if len(sys.argv) > 1 and sys.argv[1] == '--unsup':
+        LEARNING_RATE = 2 * 10**-6
+        HIDDEN_SIZE = 256
+        EMBED_DIM = 128
+    else:
+        LEARNING_RATE = .001
+        HIDDEN_SIZE = 256
+        EMBED_DIM = dataloader.n_classes
+
+    model_args = [[dataloader.n_feats, HIDDEN_SIZE, EMBED_DIM], [25, 5], dataloader]
     if len(sys.argv) > 1 and sys.argv[1] == '--unsup':
         from graphsage_unsup import UnsupGraphSAGE
         model = UnsupGraphSAGE(*model_args)
