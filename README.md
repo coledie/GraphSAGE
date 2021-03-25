@@ -1,5 +1,5 @@
 # GraphSAGE
-GraphSAGE + Control variate for GCN implemented in PyTorch.
+GraphSAGE in PyTorch.
 
 ## Usage
 
@@ -12,10 +12,4 @@ python graphsage.py
 
 # Unsupervised graphsage
 python graphsage_unsup.py
-
-# Control variate on supervised graphsage
-python cv.py
-
-# Control variate on unsupervised graphsage
-python cv.py --unsup
 ```
